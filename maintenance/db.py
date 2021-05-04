@@ -14,7 +14,7 @@ import psycopg2
 import psycopg2.extras
 
 import config
-print("Mattermost DB cleanup script. Tested on 5.33\n")
+print("Mattermost DB cleanup script. Tested on 5.34\n")
 
 dbconn = psycopg2.connect(config.dbconnstring)
 dbconn.set_session(autocommit=False)
