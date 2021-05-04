@@ -12,7 +12,7 @@ import psycopg2
 import psycopg2.extras
 
 import config
-print("Mattermost FS cleanup script. Tested on 5.33\n")
+print("Mattermost FS cleanup script. Tested on 5.34\n")
 
 dbconn = psycopg2.connect(config.dbconnstring)
 dbconn.set_session(autocommit=False)
@@ -83,7 +83,7 @@ print("** ["+("%07.6g"%round(time.time() - TS_START, 5))+"] Files on filesystem:
 # diff + del files/dirs #
 #########################
 diff_files = fs_files - db_files
-del_files = [f for f in diff_files if not f.startswith("brand/")]
+del_files = [f for f in diff_files if not f.startswith("brand/") and not f.startswith("plugins/")]
 
 print("** ["+("%07.6g"%round(time.time() - TS_START, 5))+"] Files to be deleted: "+str(len(del_files)))
 
