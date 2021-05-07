@@ -16,36 +16,25 @@ import config
 def main(dbconn):
     cur = dbconn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cur.execute("""
-                    WITH last_day AS(
-                        SELECT channelid, count(0) AS cnt FROM posts WHERE deleteat = 0 AND createat > EXTRACT(EPOCH FROM (NOW() - INTERVAL '1 day'))*1000 GROUP BY channelid
-                    ),
-                    last_week AS(
-                        SELECT channelid, count(0) AS cnt FROM posts WHERE deleteat = 0 AND createat > EXTRACT(EPOCH FROM (NOW() - INTERVAL '1 week'))*1000 GROUP BY channelid
-                    ),
-                    since_cutoff AS(
-                        SELECT channelid, count(0) AS cnt FROM posts WHERE deleteat = 0 AND createat > EXTRACT(EPOCH FROM TIMESTAMP '"""+config.cutoff_date+"""')*1000 GROUP BY channelid
-                    )
-                    SELECT cname, cnt_seven_days, cnt_one_day, cnt_cutoff_date FROM (
-                        SELECT
-                            t.name || '|' || c.name AS cname,
-                            COALESCE((SELECT cnt FROM last_day WHERE channelid = c.id), 0) AS cnt_one_day,
-                            COALESCE((SELECT cnt FROM last_week WHERE channelid = c.id), 0) AS cnt_seven_days,
-                            COALESCE((SELECT cnt FROM since_cutoff WHERE channelid = c.id), 0) AS cnt_cutoff_date
-                        FROM teams AS t, channels AS c WHERE c.teamid = t.id AND c.type = 'O'
-                    ) AS a
-                    WHERE NOT (cnt_one_day = 0 AND cnt_seven_days = 0 AND cnt_cutoff_date = 0)
-                    -- ORDER BY cnt_seven_days DESC, cname
-                    ORDER BY cnt_cutoff_date DESC, cname
+                    SELECT teams.name||'|'||channels.name AS cname, COALESCE(A.cntp,0) AS cutoff_cntp, COALESCE(A.cntu,0) AS cutoff_cntu, COALESCE(B.cntp,0) AS month_cntp, COALESCE(B.cntu,0) AS month_cntu,
+                        COALESCE(C.cntp,0) AS week_cntp, COALESCE(C.cntu,0) AS week_cntu, COALESCE(D.cntp,0) AS day_cntp, COALESCE(D.cntu,0) AS day_cntu
+                    FROM (select channelid, count(*) as cntp, count(distinct userid) as cntu FROM posts WHERE deleteat = 0 AND createat > extract(epoch FROM TIMESTAMP '"""+config.cutoff_date+"""')*1000 GROUP BY channelid) as A
+                    LEFT JOIN (select channelid, count(*) as cntp, count(distinct userid) as cntu FROM posts WHERE deleteat = 0 AND createat > extract(epoch FROM (NOW() - INTERVAL '1 month'))*1000 GROUP BY channelid) as B ON (A.channelid=B.channelid)
+                    LEFT JOIN (select channelid, count(*) as cntp, count(distinct userid) as cntu FROM posts WHERE deleteat = 0 AND createat > extract(epoch FROM (NOW() - INTERVAL '1 week'))*1000 GROUP BY channelid) as C ON (A.channelid=C.channelid)
+                    LEFT JOIN (select channelid, count(*) as cntp, count(distinct userid) as cntu FROM posts WHERE deleteat = 0 AND createat > extract(epoch FROM (NOW() - INTERVAL '1 day'))*1000 GROUP BY channelid) as D ON (A.channelid=D.channelid)
+                    JOIN channels ON (channels.id = A.channelid AND channels.type = 'O') JOIN teams ON (teams.id = channels.teamid) ORDER BY A.cntp DESC
                 """)
 
-    total_one_day = total_seven_day = total_cutoff_date = 0
-    msg = "#channel_activity #mmstats by last 7 days.\n\n|team|channel|since "+config.cutoff_date+"|7 days|24 hours|\n|---|---|---:|---:|---:|\n"
+    totalp_day = totalp_week = totalp_month = totalp_cutoff = 0
+    msg = "#channel_activity #mmstats posts and distinct users in course-channels.\n\n|team|channel|since "+config.cutoff_date+" posts|du|month posts|du|week posts|du|day posts|du|\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n"
     for record in cur.fetchall():
 
-        if record["cnt_cutoff_date"] > 2 and "w-inf-tuwien|" in record["cname"]:
-            total_one_day += record["cnt_one_day"]
-            total_seven_day += record["cnt_seven_days"]
-            total_cutoff_date += record["cnt_cutoff_date"]
-            msg += "|"+record["cname"]+"|"+str(record["cnt_cutoff_date"])+"|"+str(record["cnt_seven_days"])+"|"+str(record["cnt_one_day"])+"|\n"
+        if record["cutoff_cntp"] > 2 and "w-inf-tuwien|" in record["cname"]:
+            totalp_day += record["day_cntp"]
+            totalp_week += record["week_cntp"]
+            totalp_month += record["month_cntp"]
+            totalp_cutoff += record["cutoff_cntp"]
 
-    return msg + "||**Totals**|**"+str(total_seven_day)+"**|**"+str(total_one_day)+"**|**"+str(total_cutoff_date)+"**|"
+            msg += "|"+record["cname"]+"|"+str(record["cutoff_cntp"])+"|"+str(record["cutoff_cntu"])+"|"+str(record["month_cntp"])+"|"+str(record["month_cntu"])+"|"+str(record["week_cntp"])+"|"+str(record["week_cntu"])+"|"+str(record["day_cntp"])+"|"+str(record["day_cntu"])+"|\n"
+
+    return msg + "||**Totals**|**"+str(totalp_cutoff)+"**||**"+str(totalp_month)+"**||**"+str(totalp_week)+"**||**"+str(totalp_day)+"**||"
