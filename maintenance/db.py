@@ -14,7 +14,7 @@ import psycopg2
 import psycopg2.extras
 
 import config
-print("Mattermost DB cleanup script. Tested on 5.34\n")
+print("Mattermost DB cleanup script. Tested on 5.35\n")
 
 dbconn = psycopg2.connect(config.dbconnstring)
 dbconn.set_session(autocommit=False)
@@ -189,7 +189,7 @@ print()
 print("Deleting orphaned entries ...")
 cur = dbconn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-# private channels
+# empty private channels
 cur.execute("""DELETE FROM channels WHERE id NOT IN (SELECT channelid FROM channelmembers) AND type = 'P' RETURNING *""")
 print("* ["+("%07.6g"%round(time.time() - TS_START, 5))+"] "+str(cur.rowcount)+" deleted orphaned private channel(s).")
 
@@ -316,11 +316,12 @@ cur.execute("""DELETE FROM sidebarchannels WHERE sidebarchannels.categoryid IN (
 print("* ["+("%07.6g"%round(time.time() - TS_START, 5))+"] "+str(cur.rowcount)+" removed type=channel sidebarchannels sorting information.")
 
 # channel totalmsgcount (MM updates totalmsgcount for non-system-posts only)
-cur.execute("""UPDATE channels SET totalmsgcount = sq.cnt
-            FROM (SELECT count(posts.id) AS cnt, channels.id AS id FROM posts RIGHT JOIN channels ON (posts.channelid = channels.id AND posts.type NOT LIKE 'system_%') GROUP BY channels.id) AS sq
-            WHERE channels.id = sq.id and totalmsgcount IS DISTINCT FROM sq.cnt
+cur.execute("""UPDATE channels SET totalmsgcount = sq.cnt, totalmsgcountroot = sq.cntroot FROM (
+                SELECT COUNT(posts.id) AS cnt, SUM(CASE WHEN NOT posts.id isNULL AND (posts.rootid = '' OR posts.rootid isNULL) THEN 1 ELSE 0 END) AS cntroot, channels.id AS id
+                FROM posts RIGHT JOIN channels ON (posts.channelid = channels.id AND posts.type NOT LIKE 'system_%') GROUP BY channels.id) AS sq
+            WHERE channels.id = sq.id and (totalmsgcount IS DISTINCT FROM sq.cnt OR totalmsgcountroot IS DISTINCT FROM sq.cntroot)
             RETURNING *""")
-print("* ["+("%07.6g"%round(time.time() - TS_START, 5))+"] "+str(cur.rowcount)+" updated channel totalmsgcount.")
+print("* ["+("%07.6g"%round(time.time() - TS_START, 5))+"] "+str(cur.rowcount)+" updated channel totalmsgcount(root).")
 
 # channel lastpostat for non-empty channels only (MM updates lastpostat for every post, incl. systemposts)
 cur.execute("""UPDATE channels SET lastpostat = sq.pt
@@ -334,8 +335,9 @@ print("* ["+("%07.6g"%round(time.time() - TS_START, 5))+"] "+str(cur.rowcount)+"
 #print("* ["+("%07.6g"%round(time.time() - TS_START, 5))+"] "+str(cur.rowcount)+" removed obscure post-properti(y/ies).")
 
 # good enough approach: channelmembers msgcount and lastviewedat (mm sometimes checks diffrences in msg counts and sometimes its lastviewedat. 0 for both is ok)
-cur.execute("""UPDATE channelmembers SET msgcount = totalmsgcount, lastviewedat = lastpostat FROM channels WHERE channelid = channels.id AND (msgcount > totalmsgcount OR lastviewedat > lastpostat) RETURNING *""")
-print("* ["+("%07.6g"%round(time.time() - TS_START, 5))+"] "+str(cur.rowcount)+" updated channelmember msgcount/lastviewedat. (good enough)")
+cur.execute("""UPDATE channelmembers SET msgcount = totalmsgcount, msgcountroot = totalmsgcountroot, lastviewedat = lastpostat FROM channels
+            WHERE channelid = channels.id AND (msgcount > totalmsgcount OR msgcountroot > totalmsgcountroot OR lastviewedat > lastpostat) RETURNING *""")
+print("* ["+("%07.6g"%round(time.time() - TS_START, 5))+"] "+str(cur.rowcount)+" updated channelmember msgcount(root)/lastviewedat. (good enough)")
 
 # perfect: channelmembers msgcount and lastviewedat (mm sometimes checks diffrences in msg counts and sometimes its lastviewedat. 0 for both is ok)
 #cur.execute("UPDATE channelmembers SET msgcount = sq.cnt, lastviewedat = sq.pt FROM ( "
